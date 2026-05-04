@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "OS Header Switcher",
+  "description": "Changes OS-related request headers while preserving the running Chrome version.",
+  "version": "0.1.0",
+  "permissions": [
+    "declarativeNetRequest",
+    "storage"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "src/service-worker.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "OS Header Switcher",
+    "default_popup": "popup/popup.html"
+  }
+}

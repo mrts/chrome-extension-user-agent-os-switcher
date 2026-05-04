@@ -1,0 +1,10 @@
+{
+  "name": "chrome-extension-user-agent-switcher",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node tests/os.test.mjs",
+    "test:browser": "node tests/browser-smoke.mjs"
+  }
+}
