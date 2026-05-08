@@ -329,7 +329,7 @@ function discoverExtensionId(userDataDir) {
 
   for (const [extensionId, settings] of Object.entries(extensionSettings)) {
     if (
-      settings.manifest?.name === "OS Header Switcher" ||
+      settings.manifest?.name === "User agent OS switcher" ||
       (settings.path && path.resolve(settings.path) === repoRoot)
     ) {
       return extensionId;
@@ -372,7 +372,17 @@ async function setTargetOS(extensionId, targetOS) {
       if (!response || !response.ok) {
         throw new Error(response && response.error || "Unable to update header rule.");
       }
-      return response.targetOS;
+      const rules = await chrome.declarativeNetRequest.getDynamicRules();
+      const scripts = await chrome.scripting.getRegisteredContentScripts();
+      return {
+        targetOS: response.targetOS,
+        rules: rules.map(rule => ({
+          id: rule.id,
+          requestHeaders: rule.action.requestHeaders,
+          responseHeaders: rule.action.responseHeaders
+        })),
+        scripts: scripts.map(script => script.id)
+      };
     })()`;
     const result = await cdp.send("Runtime.evaluate", {
       expression,
@@ -384,7 +394,9 @@ async function setTargetOS(extensionId, targetOS) {
       throw new Error(JSON.stringify(result.exceptionDetails));
     }
 
-    assert.equal(result.result.value, targetOS);
+    assert.equal(result.result.value.targetOS, targetOS);
+    assert.deepEqual(result.result.value.scripts, ["os-header-switcher-main"]);
+    assert.deepEqual(result.result.value.rules.map((rule) => rule.id).sort(), [1, 2]);
     cdp.close();
   } finally {
     await chrome.close();
@@ -394,13 +406,101 @@ async function setTargetOS(extensionId, targetOS) {
 async function assertRequestHeaders(expectation) {
   server.reset();
 
-  await runChrome([...baseArgs, "--dump-dom", server.url]);
+  const chrome = await launchChrome([
+    ...baseArgs,
+    "--remote-debugging-port=0",
+    "about:blank"
+  ]);
+
+  try {
+    const cdp = await connectWebSocket(chrome.wsUrl);
+
+    await delay(1000);
+
+    const { targetInfos } = await cdp.send("Target.getTargets");
+    const target = targetInfos.find((info) => info.type === "page" && info.url.startsWith(server.url)) ||
+      targetInfos.find((info) => info.type === "page");
+    assert.ok(target, "unable to find page target");
+
+    const { sessionId } = await cdp.send("Target.attachToTarget", {
+      targetId: target.targetId,
+      flatten: true
+    });
+    await cdp.send("Page.enable", {}, sessionId);
+    await cdp.send("Page.navigate", {
+      url: server.url
+    }, sessionId);
+    await delay(1000);
+    const expression = `(async () => {
+      const highEntropyValues = navigator.userAgentData ?
+        await navigator.userAgentData.getHighEntropyValues([
+          "architecture",
+          "bitness",
+          "fullVersionList",
+          "model",
+          "platform",
+          "platformVersion",
+          "uaFullVersion",
+          "wow64"
+        ]) :
+        null;
+
+      return {
+        userAgent: navigator.userAgent,
+        appVersion: navigator.appVersion,
+        platform: navigator.platform,
+        serverTiming: performance.getEntriesByType("navigation").flatMap(entry =>
+          (entry.serverTiming || []).map(timing => ({
+            name: timing.name,
+            description: timing.description
+          }))
+        ),
+        userAgentData: navigator.userAgentData ? {
+          brands: navigator.userAgentData.brands,
+          mobile: navigator.userAgentData.mobile,
+          platform: navigator.userAgentData.platform,
+          highEntropyValues
+        } : null
+      };
+    })()`;
+    const result = await cdp.send("Runtime.evaluate", {
+      expression,
+      awaitPromise: true,
+      returnByValue: true
+    }, sessionId);
+
+    if (result.exceptionDetails) {
+      throw new Error(JSON.stringify(result.exceptionDetails));
+    }
+
+    const page = result.result.value;
+
+    assert.match(page.userAgent, expectation.userAgentOS, JSON.stringify(page));
+    assert.match(page.userAgent, /(?:Chrome|HeadlessChrome)\/[0-9]+(?:\.[0-9]+){0,3}/);
+    assert.match(page.appVersion, expectation.userAgentOS);
+    assert.equal(page.platform, expectation.navigatorPlatform);
+
+    if (page.userAgentData) {
+      assert.equal(page.userAgentData.mobile, false);
+      assert.equal(page.userAgentData.platform, expectation.uaPlatform);
+      assert.equal(page.userAgentData.highEntropyValues.platform, expectation.uaPlatform);
+      assert.equal(page.userAgentData.highEntropyValues.platformVersion, expectation.platformVersion);
+      assert.equal(page.userAgentData.highEntropyValues.architecture, "x86");
+      assert.equal(page.userAgentData.highEntropyValues.bitness, "64");
+    }
+
+    cdp.close();
+  } finally {
+    await chrome.close();
+  }
 
   const headers = server.getHeaders();
   assert.ok(headers, "local server did not receive a request");
   assert.match(headers["user-agent"], expectation.userAgentOS);
-  assert.match(headers["user-agent"], /Chrome\/[0-9]+(?:\.[0-9]+){0,3}/);
+  assert.match(headers["user-agent"], /(?:Chrome|HeadlessChrome)\/[0-9]+(?:\.[0-9]+){0,3}/);
   assert.equal(headers["sec-ch-ua-platform"], expectation.platform);
+  assert.equal(headers["sec-ch-ua-platform-version"], `"${expectation.platformVersion}"`);
+  assert.equal(headers["sec-ch-ua-mobile"], "?0");
 }
 
 maybeSkipUnsupportedChrome();
@@ -425,21 +525,31 @@ try {
   await runChrome([...baseArgs, "--dump-dom", "about:blank"]);
   const extensionId = discoverExtensionId(userDataDir);
 
+  await setTargetOS(extensionId, "windows");
   await assertRequestHeaders({
     userAgentOS: /Windows NT 10\.0; Win64; x64/,
-    platform: "\"Windows\""
+    platform: "\"Windows\"",
+    uaPlatform: "Windows",
+    platformVersion: "13.0.0",
+    navigatorPlatform: "Win32"
   });
 
   await setTargetOS(extensionId, "macos");
   await assertRequestHeaders({
     userAgentOS: /Macintosh; Intel Mac OS X 10_15_7/,
-    platform: "\"macOS\""
+    platform: "\"macOS\"",
+    uaPlatform: "macOS",
+    platformVersion: "10.15.7",
+    navigatorPlatform: "MacIntel"
   });
 
   await setTargetOS(extensionId, "linux");
   await assertRequestHeaders({
     userAgentOS: /X11; Linux x86_64/,
-    platform: "\"Linux\""
+    platform: "\"Linux\"",
+    uaPlatform: "Linux",
+    platformVersion: "",
+    navigatorPlatform: "Linux x86_64"
   });
 } finally {
   await server.close();

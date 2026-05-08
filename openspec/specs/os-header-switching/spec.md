@@ -1,7 +1,7 @@
 # os-header-switching Specification
 
 ## Purpose
-Defines configurable desktop OS selection and request-header rewriting for `User-Agent` and `Sec-CH-UA-Platform`.
+Defines configurable desktop OS selection for latest Chrome-style request headers and page navigator user-agent surfaces while preserving browser version values.
 
 ## Requirements
 ### Requirement: Default Target OS
@@ -55,20 +55,50 @@ The extension SHALL set the outgoing `Sec-CH-UA-Platform` request header for HTT
 - **WHEN** an HTTP or HTTPS request is made while the active target OS is Linux
 - **THEN** the request `Sec-CH-UA-Platform` header is `"Linux"`
 
+### Requirement: User-Agent Client Hint OS Version Rewriting
+The extension SHALL set OS-related User-Agent Client Hint values for latest Chrome while preserving browser brand and version values.
+
+#### Scenario: Windows 11 platform version is applied
+- **WHEN** an HTTP or HTTPS request is made while the active target OS is Windows
+- **THEN** the request `Sec-CH-UA-Platform-Version` header is `"13.0.0"`
+- **AND** browser version headers remain based on the running Chrome version
+
+#### Scenario: macOS platform version is applied
+- **WHEN** an HTTP or HTTPS request is made while the active target OS is macOS
+- **THEN** the request `Sec-CH-UA-Platform-Version` header is `"10.15.7"`
+- **AND** browser version headers remain based on the running Chrome version
+
+#### Scenario: Linux platform version is applied
+- **WHEN** an HTTP or HTTPS request is made while the active target OS is Linux
+- **THEN** the request `Sec-CH-UA-Platform-Version` header is `""`
+- **AND** browser version headers remain based on the running Chrome version
+
+### Requirement: Page JavaScript OS Rewriting
+The extension SHALL update page JavaScript user-agent OS surfaces for normal HTTP and HTTPS documents and frames.
+
+#### Scenario: Windows page surfaces are applied
+- **WHEN** a page reads `navigator.userAgent`, `navigator.appVersion`, `navigator.platform`, or `navigator.userAgentData` while the active target OS is Windows
+- **THEN** those values report Windows OS data
+- **AND** `navigator.userAgentData.getHighEntropyValues()` reports Windows platform data with Windows 11 platform version
+
+#### Scenario: Browser version values are preserved
+- **WHEN** a page reads browser brand or version values from `navigator.userAgent` or `navigator.userAgentData`
+- **THEN** those values remain based on the running Chrome version
+
 ### Requirement: Header Rule Synchronization
-The extension SHALL synchronize its request-header modification rules after installation, browser startup, and target OS changes.
+The extension SHALL synchronize request-header modification rules, page-data response header rules, and page injection scripts after service worker startup, installation, browser startup, and target OS changes.
 
 #### Scenario: Target OS change updates rules
 - **WHEN** the user changes the target OS from Windows to Linux
-- **THEN** subsequent HTTP and HTTPS requests use Linux values for both `User-Agent` and `Sec-CH-UA-Platform`
+- **THEN** subsequent HTTP and HTTPS requests and normal page JavaScript surfaces use Linux OS values
 
-### Requirement: Header-Only Scope
-The extension SHALL NOT modify page JavaScript user-agent surfaces or high-entropy User-Agent Client Hint headers as part of this capability.
+### Requirement: Limited Spoofing Scope
+The extension SHALL only provide latest Chrome-style desktop OS spoofing and SHALL NOT provide general browser, version, device, worker, or per-site spoofing.
 
-#### Scenario: Page JavaScript surfaces remain out of scope
-- **WHEN** a page reads `navigator.userAgent`, `navigator.platform`, or `navigator.userAgentData`
-- **THEN** this capability does not require those page JavaScript values to match the selected target OS
+#### Scenario: Browser version remains out of scope
+- **WHEN** a request or page reports browser brand and version values
+- **THEN** this capability does not require changing those values away from the running Chrome version
 
-#### Scenario: High-entropy hints remain out of scope
-- **WHEN** a site requests `Sec-CH-UA-Platform-Version`, `Sec-CH-UA-Arch`, or `Sec-CH-UA-Bitness`
-- **THEN** this capability does not require those headers to match the selected target OS
+#### Scenario: Workers remain out of scope
+- **WHEN** a page worker reads worker navigator values
+- **THEN** this capability does not require those worker values to match the selected target OS

@@ -1,10 +1,12 @@
 {
   "manifest_version": 3,
-  "name": "OS Header Switcher",
+  "name": "User agent OS switcher",
   "description": "Changes OS-related request headers while preserving the running Chrome version.",
   "version": "0.1.0",
   "permissions": [
     "declarativeNetRequest",
+    "declarativeNetRequestWithHostAccess",
+    "scripting",
     "storage"
   ],
   "host_permissions": [
@@ -16,7 +18,7 @@
     "type": "module"
   },
   "action": {
-    "default_title": "OS Header Switcher",
+    "default_title": "User agent OS switcher",
     "default_popup": "popup/popup.html"
   }
 }
